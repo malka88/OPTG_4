@@ -4,7 +4,7 @@ var geometry;
 
 var clock = new THREE.Clock();
 
-//var keyboard = new THREEx.KeyboardState();
+var keyboard = new THREEx.KeyboardState();
 
 var n = 100;
 var cursor3D, circle;
@@ -25,6 +25,8 @@ var models = new Map();
 
 var selected = null;
 
+var a = 0.0;
+
 init();
 animate();
 
@@ -36,9 +38,11 @@ function init()
     camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 40000 );
     
 
-    camera.position.set(n/2, n/2, n*1.5);
+    //camera.position.set(n/2, n/2, n*1.5);
+    //camera.lookAt(new THREE.Vector3( n/2, 0.0, n/2));
 
-    camera.lookAt(new THREE.Vector3( n/2, 0.0, n/2));
+    camera.position.set(n, n, 0);
+    camera.lookAt(new THREE.Vector3(n/2, 0, n/2));
 
 
     renderer = new THREE.WebGLRenderer( { antialias: false } );
@@ -77,10 +81,29 @@ function init()
     var helper = new THREE.CameraHelper(light.shadow.camera);
     add3DCursor();
     addCircle();
+    crSky();
     terrainGen();
     GUI();
     loadModel('models/', 'Cyprys_House.obj', 'Cyprys_House.mtl', 1, 'house');
     loadModel('models/', 'Bush1.obj', 'Bush1.mtl', 1, 'bush');
+}
+
+function crSky()
+{
+    var loader = new THREE.TextureLoader();
+    var geometry = new THREE.SphereGeometry( 1000, 32, 32 );
+    var tex = loader.load( 'pics/sky.jpg' );
+    
+    tex.minFilter = THREE.NearestFilter;
+
+    var material = new THREE.MeshBasicMaterial({
+        map: tex,
+        side: THREE.DoubleSide
+    });
+
+    sphere = new THREE.Mesh( geometry, material );
+
+    scene.add( sphere );
 }
 
 function terrainGen()
@@ -149,6 +172,26 @@ function animate()
     if (brushDirection != 0)
     {
         sculpt(brushDirection, delta);
+    }
+
+    if (keyboard.pressed("left")) 
+    {
+        a += 0.05;
+        var x = n/2 + n/2 * Math.cos(a);
+        var z = n/2 + n/2 * Math.sin(a);
+
+        camera.position.set(x, n, z);
+        camera.lookAt(new THREE.Vector3(n/2, 0, n/2));
+    }
+
+    if (keyboard.pressed("right"))
+    {
+        a -= 0.05;
+        var x = n/2 + n/2 * Math.cos(a);
+        var z = n/2 + n/2 * Math.sin(a);
+
+        camera.position.set(x, n, z);        
+        camera.lookAt(new THREE.Vector3(n/2, 0, n/2));
     }
 
     requestAnimationFrame( animate );
@@ -395,19 +438,36 @@ function GUI()
 {
     var params =
     {
-        sx: 0, sy: 0, sz: 0,
+        Rotate: 0, Scale: 0, sz: 0,
         brush: false,
         addBush: function() { addMesh('bush') },
-        addHouse: function() { addMesh('house') }
-        //del: function() { delMesh() }
+        addHouse: function() { addMesh('house') },
+        del: function() { delMesh() }
     };
-    var folder1 = gui.addFolder('Scale');
-    var meshSX = folder1.add( params, 'sx' ).min(1).max(100).step(1).listen();
-    var meshSY = folder1.add( params, 'sy' ).min(1).max(100).step(1).listen();
-    var meshSZ = folder1.add( params, 'sz' ).min(1).max(100).step(1).listen();
+    var folder1 = gui.addFolder('Transformations');
+    var meshSX = folder1.add( params, 'Scale' ).min(1).max(100).step(1).listen();
+    var meshSY = folder1.add( params, 'Rotate' ).min(1).max(360).step(1).listen();
+    //var meshSZ = folder1.add( params, 'sz' ).min(1).max(100).step(1).listen();
     folder1.open();
-    //meshSX.onChange(function(value) {…});
-    //meshSY.onChange(function(value) {…});
+    meshSX.onChange(function(value) {
+
+    });
+    meshSY.onChange(function(value) {
+        if (selected != null && brVis == false)
+        {
+            selected.rotation.set(0, value * 0.01, 0);
+            selected.userData.cube.rotation.set(0, value * 0.01, 0);
+
+            selected.userData.box.setFromObject(selected);
+
+            var pos = new THREE.Vector3();
+
+            selected.userData.box.getCenter(pos);
+            selected.userData.cube.position.copy(pos);
+            //selected.userData.obb.position.copy(pos); 
+
+        }
+    });
     //meshSZ.onChange(function(value) {…});
     var cubeVisible = gui.add( params, 'brush' ).name('brush').listen();
     cubeVisible.onChange(function(value)
@@ -416,9 +476,9 @@ function GUI()
         cursor3D.visible = value;
         circle.visible = value;
     });
-    gui.add( params, 'addHouse' ).name( "add house" );
-    gui.add( params, 'addBush' ).name( "add bush" );
-    //gui.add( params, 'del' ).name( "delete" );
+    gui.add( params, 'addHouse' ).name( "Add house" );
+    gui.add( params, 'addBush' ).name( "Add bush" );
+    gui.add( params, 'del' ).name( "Delete" );
 
     gui.open();
 }
