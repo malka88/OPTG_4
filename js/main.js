@@ -1,4 +1,5 @@
-var camera, scene, renderer;
+var camera, scene, renderer, cameraOrtho, sceneOrtho;
+var loader = new THREE.TextureLoader();
 var container;
 var geometry;
 
@@ -24,6 +25,18 @@ var brVis = false;
 var models = new Map();
 
 var selected = null;
+var sprt;
+var g = new THREE.Vector3(0, -9.8, 0);
+var particles = [];
+var MAX_PARTICLES = 1000;
+var PARTICLES_PER_SECOND = 100;
+var partVis = false;
+var sprtBtn = [];
+
+var uWind = 0;
+var wind = new THREE.Vector3(0.0, 0.0, 0.0);
+
+var rainMat = null;
 
 var a = 0.0;
 
@@ -35,8 +48,15 @@ function init()
 {
     container = document.getElementById( 'container' );
     scene = new THREE.Scene();
+    sceneOrtho = new THREE.Scene();
+
+    var width = window.innerWidth;
+	var height = window.innerHeight;
+
+    cameraOrtho = new THREE.OrthographicCamera( - width / 2, width / 2, height / 2, - height / 2, 1, 10 );
+    cameraOrtho.position.z = 10;
+
     camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 40000 );
-    
 
     //camera.position.set(n/2, n/2, n*1.5);
     //camera.lookAt(new THREE.Vector3( n/2, 0.0, n/2));
@@ -54,6 +74,8 @@ function init()
 
     container.appendChild( renderer.domElement );
     window.addEventListener( 'resize', onWindowResize, false );
+
+    renderer.autoClear = false;
 
     renderer.domElement.addEventListener('mousedown',onDocumentMouseDown,false);
     renderer.domElement.addEventListener('mouseup',onDocumentMouseUp,false);
@@ -86,6 +108,12 @@ function init()
     GUI();
     loadModel('models/', 'Cyprys_House.obj', 'Cyprys_House.mtl', 1, 'house');
     loadModel('models/', 'Bush1.obj', 'Bush1.mtl', 1, 'bush');
+
+    //addButtons();
+    sprtBtn.push(addButtons('house'));
+    sprtBtn.push(addButtons('bush'));
+
+    rainMat = createSpriteMaterial('pics/b084afa2b8c082060b58360e309c11a5.jpg');
 }
 
 function crSky()
@@ -155,14 +183,24 @@ function terrainGen()
 
 function onWindowResize()
 {
+    var width = window.innerWidth;
+    var height = window.innerHeight;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    cameraOrtho.left = - width / 2;
+	cameraOrtho.right = width / 2;
+	cameraOrtho.top = height / 2;
+	cameraOrtho.bottom = - height / 2;
+	cameraOrtho.updateProjectionMatrix();
     renderer.setSize( window.innerWidth, window.innerHeight );
 }
 
 function render() 
 {
+    renderer.clear();
     renderer.render( scene, camera ); 
+    renderer.clearDepth();
+	renderer.render( sceneOrtho, cameraOrtho );
 }
 
 function animate() 
@@ -193,6 +231,8 @@ function animate()
         camera.position.set(x, n, z);        
         camera.lookAt(new THREE.Vector3(n/2, 0, n/2));
     }
+
+    emitter(delta);
 
     requestAnimationFrame( animate );
     render();
@@ -300,6 +340,15 @@ function onDocumentMouseScroll( event )
 
 function onDocumentMouseMove( event )
 {
+    var mpos = {};
+
+    mpos.x = event.clientX - (window.innerWidth / 2);
+    mpos.y = (window.innerHeight / 2) - event.clientY;
+    if(sprtBtn[0] != null)
+        hitButton(mpos, sprtBtn[0]);
+    if(sprtBtn[1] != null)
+        hitButton(mpos, sprtBtn[1]);
+
     mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
     mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
     var vector = new THREE.Vector3( mouse.x, mouse.y, 1 );
@@ -350,6 +399,10 @@ function onDocumentMouseMove( event )
         if ( intersects.length > 0 )
         {
             if(selected != null){
+                var oldPos = new THREE.Vector3();
+
+                oldPos.copy(selected.position);
+
                 selected.position.copy(intersects[0].point);
                 selected.userData.box.setFromObject(selected);
                 var pos = new THREE.Vector3();
@@ -365,6 +418,15 @@ function onDocumentMouseMove( event )
                         if(intersect(selected.userData, objectsList[i].userData.model.userData) == true)
                         {
                             objectsList[i].material.visible = true;
+
+                            if(selected != null)
+                            {
+                                selected.position.copy(oldPos);
+                                selected.userData.box.setFromObject(selected);
+                                selected.userData.box.getCenter(pos);
+                                selected.userData.obb.position.copy(pos);
+                                selected.userData.cube.position.copy(pos);
+                            }
                         }
                     }
                 }
@@ -405,6 +467,20 @@ function onDocumentMouseUp( event )
         brushDirection = 0;
     else
     {
+        var mpos = {};
+
+        mpos.x = event.clientX - (window.innerWidth / 2);
+        mpos.y = (window.innerHeight / 2) - event.clientY;
+
+        if(sprtBtn[0] != null){
+        hitButton(mpos, sprtBtn[0]);
+        clickButton(mpos, sprtBtn[0])
+        }
+        if(sprtBtn[1] != null){
+        hitButton(mpos, sprtBtn[1]);
+        clickButton(mpos, sprtBtn[1])
+        }
+
         selected.userData.cube.material.visible = false;
         selected = null;
     }
@@ -438,21 +514,68 @@ function GUI()
 {
     var params =
     {
-        Rotate: 0, Scale: 0, sz: 0,
+        Rotate: 0, ScaleX: 0, ScaleY: 0, ScaleZ : 0, wind: 0, rain: false,
         brush: false,
         addBush: function() { addMesh('bush') },
         addHouse: function() { addMesh('house') },
         del: function() { delMesh() }
     };
+
+    var meshWIND = gui.add( params, 'wind' ).min(-100).max(100).step(1).listen();
+    meshWIND.onChange(function(value) {
+        xwind = value;
+        wind.set(xwind, 0, 0);
+    });
+
     var folder1 = gui.addFolder('Transformations');
-    var meshSX = folder1.add( params, 'Scale' ).min(1).max(100).step(1).listen();
-    var meshSY = folder1.add( params, 'Rotate' ).min(1).max(360).step(1).listen();
-    //var meshSZ = folder1.add( params, 'sz' ).min(1).max(100).step(1).listen();
+    var meshR = folder1.add( params, 'Rotate' ).min(1).max(360).step(1).listen();
+    var meshSX = folder1.add( params, 'ScaleX' ).min(1).max(100).step(0.5).listen();
+    var meshSY = folder1.add( params, 'ScaleY' ).min(1).max(100).step(0.5).listen();
+    var meshSZ = folder1.add( params, 'ScaleZ' ).min(1).max(100).step(0.5).listen();
     folder1.open();
     meshSX.onChange(function(value) {
+        if (selected != null)
+        {
+            selected.scale.x = value;
+            selected.userData.cube.scale.x = value*2;
+            selected.userData.box.setFromObject(selected);
 
+            var pos = new THREE.Vector3();
+
+            selected.userData.box.getCenter(pos);
+            selected.userData.cube.position.copy(pos);
+            selected.userData.obb.position.copy(pos); 
+        }
     });
     meshSY.onChange(function(value) {
+        if (selected != null)
+        {
+            selected.scale.y = value;
+            selected.userData.cube.scale.y = value*2;
+            selected.userData.box.setFromObject(selected);
+
+            var pos = new THREE.Vector3();
+
+            selected.userData.box.getCenter(pos);
+            selected.userData.cube.position.copy(pos);
+            selected.userData.obb.position.copy(pos); 
+        }
+    });
+    meshSZ.onChange(function(value) {
+        if (selected != null)
+        {
+            selected.scale.z = value;
+            selected.userData.cube.scale.z = value*2;
+            selected.userData.box.setFromObject(selected);
+
+            var pos = new THREE.Vector3();
+
+            selected.userData.box.getCenter(pos);
+            selected.userData.cube.position.copy(pos);
+            selected.userData.obb.position.copy(pos); 
+        }
+    });
+    meshR.onChange(function(value) {
         if (selected != null && brVis == false)
         {
             selected.rotation.set(0, value * 0.01, 0);
@@ -464,7 +587,7 @@ function GUI()
 
             selected.userData.box.getCenter(pos);
             selected.userData.cube.position.copy(pos);
-            //selected.userData.obb.position.copy(pos); 
+            selected.userData.obb.position.copy(pos); 
 
         }
     });
@@ -476,11 +599,36 @@ function GUI()
         cursor3D.visible = value;
         circle.visible = value;
     });
+
+    var particlesVisible = gui.add( params, 'rain' ).name('rain').listen();
+    particlesVisible.onChange(function(value)
+    {
+        partVis = value;
+    });
+
     gui.add( params, 'addHouse' ).name( "Add house" );
     gui.add( params, 'addBush' ).name( "Add bush" );
     gui.add( params, 'del' ).name( "Delete" );
 
     gui.open();
+}
+
+function delMesh()
+{
+    if (selected != null)
+    {
+        scene.remove(selected);
+        scene.remove(selected.userData.cube);
+
+        for (var i = 0; i < objectsList.length; i++) {
+            if (objectsList[i] == selected)
+            {
+                objectsList[i].userData.cube.material.visible = false;
+                scene.remove(objectsList[i]);
+                selected = null;
+            }
+        }
+    }
 }
 
 function addMesh(name)
@@ -666,4 +814,194 @@ function intersect(ob1, ob2)
         return false;
     }
     return true;
+}
+
+function addButton(name1, name2, click)
+{
+    var type;
+
+    if(name1 == 'models/l68717-cyprys-house-23761.jpg')
+        type = 'house';
+    if(name2 == 'models/l99380-bush-84314.png')
+        type = 'bush';
+
+    var texture1 = loader.load(name1);
+    var material1 = new THREE.SpriteMaterial( { map: texture1 } );
+
+    var texture2 = loader.load(name2);
+    var material2 = new THREE.SpriteMaterial( { map: texture2 } );
+
+        sprite = new THREE.Sprite( material1 );
+        sprite.center.set( 0.0, 1.0 );
+        sprite.scale.set( 128, 100, 1 );
+
+        sprite.position.set(0, 0, 1);
+
+        sceneOrtho.add(sprite);
+        updateHUDSprites(sprite);
+
+        var SSprite = {};
+        SSprite.sprite = sprite;
+        SSprite.mat1 = material1;
+        SSprite.mat2 = material2;
+        SSprite.click = click;
+        SSprite.type = type;
+
+        if(type == "house")
+        sprite.position.set(-window.innerWidth / 2, window.innerHeight / 2.5, 1);
+
+        if(type == "bush")
+        sprite.position.set(-window.innerWidth / 2, window.innerHeight / 2, 1);
+
+        return SSprite;
+}
+
+function updateHUDSprites(sprite) {
+
+    var width = window.innerWidth / 2;
+    var height = window.innerHeight / 2;
+
+    sprite.position.set( -width, height, 1 ); // center
+
+}
+
+function addButtons(name)
+{
+    if(name == 'house')
+        sprt = addButton('models/l68717-cyprys-house-23761.jpg', 'models/l68717-cyprys-house-23761.jpg', sprt1Click);
+
+    if(name == 'bush')
+        sprt = addButton('models/l99380-bush-84314.png', 'models/l99380-bush-84314.png', sprt2Click);
+
+    return sprt;
+}
+
+function hitButton(mPos, sprite)
+{
+    var pw = sprite.sprite.position.x;
+    var ph = sprite.sprite.position.y;
+    var sw = pw + sprite.sprite.scale.x;
+    var sh = ph - sprite.sprite.scale.y;
+
+    if(mPos.x > pw && mPos.x < sw)
+    {
+        if(mPos.y < ph && mPos.y > sh)
+        {
+            sprite.sprite.material = sprite.mat2;
+        }
+        else
+            sprite.sprite.material = sprite.mat1;
+    }
+    else sprite.sprite.material = sprite.mat1;
+}
+
+function clickButton(mPos, sprite)
+{
+    var pw = sprite.sprite.position.x;
+    var ph = sprite.sprite.position.y;
+    var sw = pw + sprite.sprite.scale.x;
+    var sh = ph - sprite.sprite.scale.y;
+
+    if(mPos.x > pw && mPos.x < sw)
+    {
+        if(mPos.y < ph && mPos.y > sh)
+        {
+            sprite.click();
+        }
+    }
+}
+
+function sprt1Click()
+{
+    addMesh('house');
+}
+
+function sprt2Click()
+{
+    addMesh('bush');
+}
+
+function createSpriteMaterial(name)
+{
+    var texture = loader.load(name);
+    var material = new THREE.SpriteMaterial( { map: texture } );
+
+    return material;
+}
+
+function addSpriteR(mat, pos, lifetime)
+{
+    sprite = new THREE.Sprite( mat );
+    sprite.center.set( 0.5, 0.5 );
+    sprite.scale.set( 1.5, 1.5, 1 );
+
+    sprite.position.copy(pos);
+
+    scene.add(sprite);
+
+    var SSprite = {};
+    SSprite.sprite = sprite;
+    SSprite.v = new THREE.Vector3(0, 0, 0);
+    SSprite.m = (Math.random() * 0.1) + 0.01;
+    SSprite.lifetime = lifetime;
+
+    return SSprite;
+}
+
+function emitter(delta)
+{
+    var current_particles = Math.ceil(PARTICLES_PER_SECOND * delta);
+
+    for(var i = 0; i < current_particles; i++)
+    {
+        if(particles.length < MAX_PARTICLES)
+        {
+            var x = Math.random()*n;
+            var z = Math.random()*n;
+
+            var lifetime = (Math.random()*2) + 3;
+
+            var pos = new THREE.Vector4(x, 150, z);
+            var particle = addSpriteR(rainMat, pos, lifetime);
+            particles.push(particle);
+        }
+    }
+
+    for(var i = 0; i < particles.length; i++)
+    {
+        particles[i].lifetime -= delta;
+        if(particles[i].lifetime <= 0)
+        {
+            scene.remove(particles[i].sprite);
+            particles.splice(i, 1);
+            continue;
+        }
+        var gs = new THREE.Vector3();
+        gs.copy(g);
+
+        gs.multiplyScalar(particles[i].m);
+        gs.multiplyScalar(delta);
+
+        particles[i].v.add(gs);
+        particles[i].sprite.position.add(particles[i].v);
+    }
+
+    for (var i = 0; i < particles.length; i++)
+    {
+        if (partVis == true)
+            particles[i].sprite.visible = true;
+        else
+            particles[i].sprite.visible = false;
+
+        var v = new THREE.Vector3(0, 0, 0);
+        var w = new THREE.Vector3(0, 0, 0);
+
+        w.copy(wind);
+        w.multiplyScalar(delta);
+
+        v.copy(particles[i].v);
+        v.add(w);
+
+        particles[i].sprite.position.add(v);
+    }
 }
